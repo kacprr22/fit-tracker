@@ -1,0 +1,5 @@
+streamlit==1.37.1
+pandas==2.2.2
+sqlalchemy==2.0.32
+psycopg2-binary==2.9.9
+altair==5.3.0
