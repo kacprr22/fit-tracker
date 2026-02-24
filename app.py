@@ -38,7 +38,6 @@ def get_engine():
             "albo lokalnie jako zmienną środowiskową DATABASE_URL."
         )
 
-    # Supabase Pooler (PgBouncer) / stabilne zachowanie:
     return create_engine(
         db_url,
         future=True,
@@ -62,7 +61,7 @@ def ensure_schema():
             );
         """))
 
-        # jeśli tabela settings już istniała kiedyś bez updated_at
+        # migracja updated_at (jeśli stara tabela nie miała)
         conn.execute(text("""alter table public.settings add column if not exists updated_at timestamptz;"""))
         conn.execute(text("""alter table public.settings alter column updated_at set default now();"""))
 
@@ -105,7 +104,7 @@ def ensure_schema():
             );
         """))
 
-        # --- POMIARY CIAŁA: bezpieczna migracja dla istniejącej tabeli ---
+        # Pomiary ciała (migracja)
         conn.execute(text("""alter table public.daily add column if not exists waist_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists biceps_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists chest_cm numeric;"""))
@@ -206,30 +205,11 @@ def load_history(conn, user_id: int) -> pd.DataFrame:
 
 
 # ----------------------------
-# FORM CLEAR
+# Streamlit widget keys reset (form_version)
 # ----------------------------
-def clear_day_form(keep_kcal_per_step: bool = True):
-    numeric_keys = [
-        "entry_m1_kcal", "entry_m1_p", "entry_m1_c", "entry_m1_f",
-        "entry_m2_kcal", "entry_m2_p", "entry_m2_c", "entry_m2_f",
-        "entry_m3_kcal", "entry_m3_p", "entry_m3_c", "entry_m3_f",
-        "entry_add_kcal", "entry_add_p", "entry_add_c", "entry_add_f",
-        "entry_steps", "entry_training_kcal",
-        # pomiary ciała
-        "entry_weight_body", "entry_waist", "entry_biceps", "entry_chest",
-    ]
-    text_keys = ["entry_training_name"]
-
-    if not keep_kcal_per_step:
-        numeric_keys.append("entry_kcal_per_step")
-
-    for k in numeric_keys:
-        if k in st.session_state:
-            st.session_state[k] = 0
-
-    for k in text_keys:
-        if k in st.session_state:
-            st.session_state[k] = ""
+def fv_key(base: str) -> str:
+    v = st.session_state.get("form_version", 0)
+    return f"{base}__v{v}"
 
 
 # ----------------------------
@@ -297,7 +277,8 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-
+    with col2:
+        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy profil ma osobne dane w bazie (user_id).")
 
 
 # ----------------------------
@@ -305,27 +286,27 @@ def login_ui():
 # ----------------------------
 ensure_schema()
 
+# init form_version (musi być przed rysowaniem widgetów)
+if "form_version" not in st.session_state:
+    st.session_state["form_version"] = 0
+
 if "user_id" not in st.session_state:
     login_ui()
     st.stop()
 
 USER_ID = int(st.session_state["user_id"])
 USER_NAME = st.session_state["user_name"]
-# --- RESET FORMULARZA PO RESTARTE / PRZELOGOWANIU ---
-# Streamlit zapamiętuje widgety po key w session_state.
-# To czyści wartości wpisów tak, żeby po odświeżeniu/relogowaniu było 0.
+
+# Reset formularza po starcie sesji (restart/odświeżenie)
+if not st.session_state.get("_session_inited", False):
+    st.session_state["form_version"] += 1
+    st.session_state["_session_inited"] = True
+
+# Reset formularza po zmianie użytkownika (przelogowanie)
 if st.session_state.get("_active_user_id") != USER_ID:
-    # nowy user (lub pierwszy raz)
-    clear_day_form(keep_kcal_per_step=True)
-    st.session_state["entry_date"] = date.today()
+    st.session_state["form_version"] += 1
     st.session_state["_active_user_id"] = USER_ID
 
-# przy starcie sesji (np. restart aplikacji / odświeżenie) - nie pokazuj ostatnich wpisów
-if not st.session_state.get("_session_inited", False):
-    clear_day_form(keep_kcal_per_step=True)
-    st.session_state["entry_date"] = date.today()
-    st.session_state["_session_inited"] = True
-    
 st.title("🍽️ Fit Tracker")
 st.caption("Wpisy dzienne • Historia • Wykresy • Cele")
 
@@ -334,7 +315,11 @@ with top[0]:
     st.success(f"Zalogowany: **{USER_NAME}**")
 with top[1]:
     if st.button("Wyloguj"):
-        st.session_state.clear()
+        # podbij wersję formularza, usuń tylko login (nie czyść całego session_state)
+        st.session_state["form_version"] += 1
+        for k in ["user_id", "user_name", "login_user", "login_pin", "_active_user_id"]:
+            if k in st.session_state:
+                del st.session_state[k]
         st.rerun()
 
 eng = get_engine()
@@ -353,10 +338,6 @@ tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 # TAB: ENTRY
 # ----------------------------
 with tabs[0]:
-    if st.session_state.get("_do_clear_form", False):
-        clear_day_form(keep_kcal_per_step=True)
-        st.session_state["_do_clear_form"] = False
-
     c_left, c_right = st.columns([2, 1])
 
     with c_right:
@@ -364,7 +345,7 @@ with tabs[0]:
 
     with c_left:
         st.subheader("Wpis dnia")
-        d = st.date_input("Data", value=date.today(), key="entry_date")
+        d = st.date_input("Data", value=date.today(), key=fv_key("entry_date"))
 
         with eng.begin() as conn:
             existing = load_day(conn, USER_ID, d)
@@ -389,10 +370,10 @@ with tabs[0]:
         def meal_block(title: str, prefix: str):
             st.markdown(f"**{title}**")
             c1, c2, c3, c4 = st.columns(4)
-            kcal = c1.number_input("kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=f"entry_{prefix}_kcal")
-            p = c2.number_input("B (g)", min_value=0.0, step=0.1, value=ex(f"p_{prefix}"), key=f"entry_{prefix}_p")
-            c = c3.number_input("W (g)", min_value=0.0, step=0.1, value=ex(f"c_{prefix}"), key=f"entry_{prefix}_c")
-            f = c4.number_input("T (g)", min_value=0.0, step=0.1, value=ex(f"f_{prefix}"), key=f"entry_{prefix}_f")
+            kcal = c1.number_input("kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=fv_key(f"entry_{prefix}_kcal"))
+            p = c2.number_input("B (g)", min_value=0.0, step=0.1, value=ex(f"p_{prefix}"), key=fv_key(f"entry_{prefix}_p"))
+            c = c3.number_input("W (g)", min_value=0.0, step=0.1, value=ex(f"c_{prefix}"), key=fv_key(f"entry_{prefix}_c"))
+            f = c4.number_input("T (g)", min_value=0.0, step=0.1, value=ex(f"f_{prefix}"), key=fv_key(f"entry_{prefix}_f"))
             return kcal, p, c, f
 
         kcal_m1, p_m1, c_m1, f_m1 = meal_block("1 posiłek", "m1")
@@ -402,19 +383,19 @@ with tabs[0]:
 
         st.markdown("### Aktywność")
         a1, a2 = st.columns(2)
-        steps = a1.number_input("Kroki", min_value=0, step=100, value=ex_int("steps"), key="entry_steps")
-        kcal_per_step = a2.number_input("kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step")
+        steps = a1.number_input("Kroki", min_value=0, step=100, value=ex_int("steps"), key=fv_key("entry_steps"))
+        kcal_per_step = a2.number_input("kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key=fv_key("entry_kcal_per_step"))
 
         t1, t2 = st.columns([2, 1])
-        training_name = t1.text_input("Trening (nazwa)", value=ex_str("training_name", ""), key="entry_training_name")
-        training_kcal = t2.number_input("Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal")
+        training_name = t1.text_input("Trening (nazwa)", value=ex_str("training_name", ""), key=fv_key("entry_training_name"))
+        training_kcal = t2.number_input("Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key=fv_key("entry_training_kcal"))
 
         st.markdown("### Pomiary ciała")
         p1, p2, p3, p4 = st.columns(4)
-        weight_body = p1.number_input("Waga (kg)", min_value=0.0, step=0.1, value=ex("weight", 0.0), key="entry_weight_body")
-        waist = p2.number_input("Talia (cm)", min_value=0.0, step=0.1, value=ex("waist_cm", 0.0), key="entry_waist")
-        biceps = p3.number_input("Biceps (cm)", min_value=0.0, step=0.1, value=ex("biceps_cm", 0.0), key="entry_biceps")
-        chest = p4.number_input("Klatka (cm)", min_value=0.0, step=0.1, value=ex("chest_cm", 0.0), key="entry_chest")
+        weight_body = p1.number_input("Waga (kg)", min_value=0.0, step=0.1, value=ex("weight", 0.0), key=fv_key("entry_weight_body"))
+        waist = p2.number_input("Talia (cm)", min_value=0.0, step=0.1, value=ex("waist_cm", 0.0), key=fv_key("entry_waist"))
+        biceps = p3.number_input("Biceps (cm)", min_value=0.0, step=0.1, value=ex("biceps_cm", 0.0), key=fv_key("entry_biceps"))
+        chest = p4.number_input("Klatka (cm)", min_value=0.0, step=0.1, value=ex("chest_cm", 0.0), key=fv_key("entry_chest"))
 
         kcal_food = kcal_m1 + kcal_m2 + kcal_m3 + kcal_add
         p_total = p_m1 + p_m2 + p_m3 + p_add
@@ -457,7 +438,7 @@ with tabs[0]:
             clear_clicked = st.button("🧹 Wyczyść pola")
 
         if clear_clicked:
-            st.session_state["_do_clear_form"] = True
+            st.session_state["form_version"] += 1
             st.rerun()
 
         if save_clicked:
@@ -480,7 +461,7 @@ with tabs[0]:
             with eng.begin() as conn:
                 upsert_day(conn, USER_ID, d, payload)
 
-            st.session_state["_do_clear_form"] = True
+            st.session_state["form_version"] += 1
             st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
             st.rerun()
 
@@ -673,7 +654,6 @@ with tabs[2]:
                     tooltip=[
                         alt.Tooltip("date_str:O", title="Data"),
                         alt.Tooltip("weight:Q", title="Waga (kg)", format=".1f"),
-                        alt.Tooltip("steps:Q", title="Kroki"),
                     ],
                 )
                 .interactive()
@@ -760,5 +740,3 @@ with tabs[3]:
         except Exception as e:
             st.error("Nie udało się zapisać ustawień.")
             st.exception(e)
-
-
