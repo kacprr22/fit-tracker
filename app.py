@@ -245,8 +245,7 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-    with col2:
-        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy ma osobne dane (oddzielone w bazie).")
+    
 
 
 # ----------------------------
@@ -606,3 +605,4 @@ with tabs[3]:
             set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
