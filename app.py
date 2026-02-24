@@ -116,7 +116,7 @@ def ensure_schema():
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = (
         conn.execute(
-            text("select value from public.settings where user_id=:uid and key=:k"),
+            text('select "value" from public.settings where user_id=:uid and "key"=:k'),
             {"uid": user_id, "k": key},
         )
         .mappings()
@@ -129,11 +129,11 @@ def set_setting(conn, user_id: int, key: str, value: str):
     conn.execute(
         text(
             """
-        insert into public.settings (user_id, key, value, updated_at)
+        insert into public.settings (user_id, "key", "value", updated_at)
         values (:uid, :k, :v, now())
-        on conflict (user_id, key)
-        do update set value = excluded.value, updated_at = now()
-    """
+        on conflict (user_id, "key")
+        do update set "value" = excluded."value", updated_at = now()
+        """
         ),
         {"uid": user_id, "k": key, "v": value},
     )
@@ -780,7 +780,8 @@ with tabs[3]:
 
     st.caption("Kcal: 🟢 do celu • 🟡 cel+200 • 🔴 powyżej. Kroki: 🟢 >= cel • 🟡 >= cel-2000 • 🔴 mniej.")
 
-    if st.button("💾 Zapisz ustawienia", type="primary"):
+if st.button("💾 Zapisz ustawienia", type="primary"):
+    try:
         with eng.begin() as conn:
             set_setting(conn, USER_ID, "kcal_target", str(float(new_kcal)))
             set_setting(conn, USER_ID, "protein_target", str(float(new_p)))
@@ -790,5 +791,9 @@ with tabs[3]:
 
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
+    except Exception as e:
+        st.error("Nie udało się zapisać ustawień.")
+        st.exception(e)
 
 
