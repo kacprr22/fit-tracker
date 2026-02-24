@@ -5,6 +5,7 @@ import streamlit as st
 import altair as alt
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 # ----------------------------
 # APP CONFIG
@@ -36,25 +37,35 @@ def get_engine():
             "Brak DATABASE_URL. Ustaw w Streamlit Cloud -> Settings -> Secrets "
             "albo lokalnie jako zmienną środowiskową DATABASE_URL."
         )
-    return create_engine(db_url, future=True, pool_pre_ping=True)
+
+    # Supabase Pooler (PgBouncer) + stabilny schemat:
+    # - wymuszamy search_path=public
+    # - NullPool ogranicza problemy z pgbouncer (nie trzyma sesji)
+    return create_engine(
+        db_url,
+        future=True,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args={"options": "-csearch_path=public"},
+    )
 
 
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
-        # Uwaga: kolumny "key" i "value" cytowane dla kompatybilności
+        # jawnie public.*
         conn.execute(text("""
-            create table if not exists settings (
+            create table if not exists public.settings (
                 user_id bigint not null,
-                "key" text not null,
-                "value" text not null,
+                key text not null,
+                value text not null,
                 updated_at timestamptz default now(),
-                primary key (user_id, "key")
+                primary key (user_id, key)
             );
         """))
 
         conn.execute(text("""
-            create table if not exists daily (
+            create table if not exists public.daily (
                 user_id bigint not null,
                 day date not null,
 
@@ -94,7 +105,7 @@ def ensure_schema():
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = conn.execute(
-        text('select "value" from settings where user_id=:uid and "key"=:k'),
+        text("select value from public.settings where user_id=:uid and key=:k"),
         {"uid": user_id, "k": key},
     ).mappings().first()
     return row["value"] if row else default
@@ -102,16 +113,16 @@ def get_setting(conn, user_id: int, key: str, default: str) -> str:
 
 def set_setting(conn, user_id: int, key: str, value: str):
     conn.execute(text("""
-        insert into settings (user_id, "key", "value", updated_at)
+        insert into public.settings (user_id, key, value, updated_at)
         values (:uid, :k, :v, now())
-        on conflict (user_id, "key")
-        do update set "value" = excluded."value", updated_at = now()
+        on conflict (user_id, key)
+        do update set value = excluded.value, updated_at = now()
     """), {"uid": user_id, "k": key, "v": value})
 
 
 def load_day(conn, user_id: int, d: date) -> dict | None:
     row = conn.execute(
-        text("select * from daily where user_id=:uid and day=:d"),
+        text("select * from public.daily where user_id=:uid and day=:d"),
         {"uid": user_id, "d": d},
     ).mappings().first()
     return dict(row) if row else None
@@ -120,7 +131,7 @@ def load_day(conn, user_id: int, d: date) -> dict | None:
 def upsert_day(conn, user_id: int, d: date, payload: dict):
     payload = {**payload, "user_id": user_id, "day": d}
     conn.execute(text("""
-        insert into daily (
+        insert into public.daily (
             user_id, day,
             kcal_m1, p_m1, c_m1, f_m1,
             kcal_m2, p_m2, c_m2, f_m2,
@@ -153,14 +164,14 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
 
 def delete_day(conn, user_id: int, d: date):
     conn.execute(
-        text("delete from daily where user_id=:uid and day=:d"),
+        text("delete from public.daily where user_id=:uid and day=:d"),
         {"uid": user_id, "d": d},
     )
 
 
 def load_history(conn, user_id: int) -> pd.DataFrame:
     df = pd.read_sql(
-        text("select * from daily where user_id=:uid order by day desc"),
+        text("select * from public.daily where user_id=:uid order by day desc"),
         conn,
         params={"uid": user_id},
     )
@@ -263,7 +274,6 @@ with top[1]:
 
 eng = get_engine()
 
-# Load settings defaults (per-user)
 with eng.begin() as conn:
     kcal_target = float(get_setting(conn, USER_ID, "kcal_target", "2200"))
     protein_target = float(get_setting(conn, USER_ID, "protein_target", "210"))
@@ -352,8 +362,8 @@ with tabs[0]:
             s_icon = "🔴"
 
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Kalorie - jedzenie", f"{kcal_food:.0f}", delta=f"cel {kcal_target:.0f}", help="Suma kcal z posiłków")
-        m2.metric("Kalorie - netto", f"{kcal_net:.0f}", delta=f"cel {kcal_target:.0f}", help="kcal jedzenie - kcal kroki - trening")
+        m1.metric("Kalorie - jedzenie", f"{kcal_food:.0f}", delta=f"cel {kcal_target:.0f}")
+        m2.metric("Kalorie - netto", f"{kcal_net:.0f}", delta=f"cel {kcal_target:.0f}")
         m3.metric("Białko (g)", f"{p_total:.0f}", delta=f"cel {protein_target:.0f}")
         m4.metric("Węglowodany (g)", f"{c_total:.0f}", delta=f"cel {carbs_target:.0f}")
         m5.metric("Tłuszcze (g)", f"{f_total:.0f}", delta=f"cel {fat_target:.0f}")
@@ -511,10 +521,6 @@ with tabs[2]:
     else:
         df = df.copy()
         df["day"] = pd.to_datetime(df["day"])
-        df["kcal_jedzenie"] = df["kcal_m1"] + df["kcal_m2"] + df["kcal_m3"] + df["kcal_add"]
-        df["B"] = df["p_m1"] + df["p_m2"] + df["p_m3"] + df["p_add"]
-        df["W"] = df["c_m1"] + df["c_m2"] + df["c_m3"] + df["c_add"]
-        df["T"] = df["f_m1"] + df["f_m2"] + df["f_m3"] + df["f_add"]
 
         df = df.sort_values("day")
         min_d = df["day"].min().date()
