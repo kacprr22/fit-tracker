@@ -286,7 +286,6 @@ def login_ui():
 # ----------------------------
 ensure_schema()
 
-# init form_version (musi być przed rysowaniem widgetów)
 if "form_version" not in st.session_state:
     st.session_state["form_version"] = 0
 
@@ -297,12 +296,12 @@ if "user_id" not in st.session_state:
 USER_ID = int(st.session_state["user_id"])
 USER_NAME = st.session_state["user_name"]
 
-# Reset formularza po starcie sesji (restart/odświeżenie)
+# Reset formularza po starcie sesji
 if not st.session_state.get("_session_inited", False):
     st.session_state["form_version"] += 1
     st.session_state["_session_inited"] = True
 
-# Reset formularza po zmianie użytkownika (przelogowanie)
+# Reset formularza po zmianie użytkownika
 if st.session_state.get("_active_user_id") != USER_ID:
     st.session_state["form_version"] += 1
     st.session_state["_active_user_id"] = USER_ID
@@ -315,7 +314,6 @@ with top[0]:
     st.success(f"Zalogowany: **{USER_NAME}**")
 with top[1]:
     if st.button("Wyloguj"):
-        # podbij wersję formularza, usuń tylko login (nie czyść całego session_state)
         st.session_state["form_version"] += 1
         for k in ["user_id", "user_name", "login_user", "login_pin", "_active_user_id"]:
             if k in st.session_state:
@@ -345,10 +343,23 @@ with tabs[0]:
 
     with c_left:
         st.subheader("Wpis dnia")
+
+        # data (zawsze świeża po form_version)
         d = st.date_input("Data", value=date.today(), key=fv_key("entry_date"))
 
-        with eng.begin() as conn:
-            existing = load_day(conn, USER_ID, d)
+        # 🔥 KLUCZOWA ZMIANA:
+        # Domyślnie NIE wczytuj danych z bazy po zalogowaniu/resecie formularza
+        load_saved = st.checkbox(
+            "Wczytaj zapisane dane dla tej daty",
+            value=False,
+            key=fv_key("entry_load_saved"),
+            help="Gdy wyłączone, formularz startuje od zera nawet jeśli w bazie jest wpis na ten dzień.",
+        )
+
+        existing = None
+        if load_saved:
+            with eng.begin() as conn:
+                existing = load_day(conn, USER_ID, d)
 
         def ex(name: str, default=0.0) -> float:
             if existing and existing.get(name) is not None:
@@ -431,26 +442,31 @@ with tabs[0]:
             f"{p_icon} białko • {c_icon} węgle • {f_icon} tłuszcz • {s_icon} kroki"
         )
 
-        btn1, btn2 = st.columns([1, 1])
+        btn1, btn2, btn3 = st.columns([1, 1, 1])
         with btn1:
             save_clicked = st.button("💾 Zapisz dzień", type="primary")
         with btn2:
             clear_clicked = st.button("🧹 Wyczyść pola")
+        with btn3:
+            load_clicked = st.button("📥 Wczytaj zapisane dane")
 
         if clear_clicked:
             st.session_state["form_version"] += 1
             st.rerun()
 
-        if save_clicked:
-            chosen_weight = float(weight_body)
+        if load_clicked:
+            # wymuś zaznaczenie checkboxa i odśwież
+            st.session_state[fv_key("entry_load_saved")] = True
+            st.rerun()
 
+        if save_clicked:
             payload = dict(
                 kcal_m1=float(kcal_m1), p_m1=float(p_m1), c_m1=float(c_m1), f_m1=float(f_m1),
                 kcal_m2=float(kcal_m2), p_m2=float(p_m2), c_m2=float(c_m2), f_m2=float(f_m2),
                 kcal_m3=float(kcal_m3), p_m3=float(p_m3), c_m3=float(c_m3), f_m3=float(f_m3),
                 kcal_add=float(kcal_add), p_add=float(p_add), c_add=float(c_add), f_add=float(f_add),
                 steps=int(steps), kcal_per_step=float(kcal_per_step),
-                weight=chosen_weight if chosen_weight > 0 else None,
+                weight=float(weight_body) if float(weight_body) > 0 else None,
                 training_name=training_name.strip() if training_name.strip() else None,
                 training_kcal=float(training_kcal),
                 waist_cm=float(waist) if float(waist) > 0 else None,
@@ -646,11 +662,7 @@ with tabs[2]:
                 .mark_line(point=True)
                 .encode(
                     x=alt.X("date_str:O", title="Data", sort=None),
-                    y=alt.Y(
-                        "weight:Q",
-                        title="Waga (kg)",
-                        scale=alt.Scale(domain=[w_min - pad, w_max + pad], nice=False),
-                    ),
+                    y=alt.Y("weight:Q", title="Waga (kg)", scale=alt.Scale(domain=[w_min - pad, w_max + pad], nice=False)),
                     tooltip=[
                         alt.Tooltip("date_str:O", title="Data"),
                         alt.Tooltip("weight:Q", title="Waga (kg)", format=".1f"),
@@ -708,7 +720,6 @@ with tabs[2]:
                     .interactive()
                 )
                 st.altair_chart(meas_chart, use_container_width=True)
-
 
 # ----------------------------
 # TAB: SETTINGS
