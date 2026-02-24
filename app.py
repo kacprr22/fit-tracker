@@ -189,7 +189,6 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
             training_name=excluded.training_name, training_kcal=excluded.training_kcal,
             waist_cm=excluded.waist_cm, biceps_cm=excluded.biceps_cm, chest_cm=excluded.chest_cm,
             updated_at=now()
-    """
         ),
         payload,
     )
@@ -797,6 +796,7 @@ if st.button("💾 Zapisz ustawienia", type="primary"):
     except Exception as e:
         st.error("Nie udało się zapisać ustawień.")
         st.exception(e)
+
 
 
 
