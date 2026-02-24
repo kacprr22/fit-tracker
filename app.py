@@ -691,20 +691,28 @@ with tabs[2]:
         if wdf.empty:
             st.info("Brak wagi w danych w wybranym zakresie.")
         else:
+            w_min = float(wdf["weight"].min())
+            w_max = float(wdf["weight"].max())
+            pad = max(0.5, (w_max - w_min) * 0.05)  # minimum 0.5 kg marginesu
+
             weight_chart = (
                 alt.Chart(wdf)
                 .mark_line(point=True)
                 .encode(
                     x=alt.X("date_str:O", title="Data", sort=None),
-                    y=alt.Y("weight:Q", title="Waga (kg)"),
+                    y=alt.Y(
+                        "weight:Q",
+                        title="Waga (kg)",
+                        scale=alt.Scale(domain=[w_min - pad, w_max + pad], nice=False),
+                    ),
                     tooltip=[
                         alt.Tooltip("date_str:O", title="Data"),
                         alt.Tooltip("weight:Q", title="Waga (kg)", format=".1f"),
                         alt.Tooltip("steps:Q", title="Kroki"),
                     ],
-                )
-                .interactive()
             )
+    .interactive()
+)
             st.altair_chart(weight_chart, use_container_width=True)
 
             delta_kg = float(wdf["weight"].iloc[-1]) - float(wdf["weight"].iloc[0])
@@ -782,4 +790,5 @@ with tabs[3]:
 
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
 
