@@ -29,42 +29,6 @@ def get_database_url() -> str | None:
     return os.environ.get("DATABASE_URL")
 
 
-def clear_day_form(keep_kcal_per_step: bool = True):
-    """
-    Czyści pola formularza (Wpis), bez kasowania danych w bazie.
-    Domyślnie zostawia kcal/krok (bo zwykle jest stałe).
-    """
-    keys_to_clear_numeric = [
-        # posiłek 1
-        "entry_m1_kcal", "entry_m1_p", "entry_m1_c", "entry_m1_f",
-        # posiłek 2
-        "entry_m2_kcal", "entry_m2_p", "entry_m2_c", "entry_m2_f",
-        # posiłek 3
-        "entry_m3_kcal", "entry_m3_p", "entry_m3_c", "entry_m3_f",
-        # dodatki
-        "entry_add_kcal", "entry_add_p", "entry_add_c", "entry_add_f",
-        # aktywność
-        "entry_steps", "entry_weight",
-        # trening
-        "entry_training_kcal",
-    ]
-
-    keys_to_clear_text = [
-        "entry_training_name",
-    ]
-
-    if not keep_kcal_per_step:
-        keys_to_clear_numeric.append("entry_kcal_per_step")
-
-    for key in keys_to_clear_numeric:
-        if key in st.session_state:
-            st.session_state[key] = 0
-
-    for key in keys_to_clear_text:
-        if key in st.session_state:
-            st.session_state[key] = ""
-
-
 @st.cache_resource
 def get_engine():
     db_url = get_database_url()
@@ -74,9 +38,7 @@ def get_engine():
             "albo lokalnie jako zmienną środowiskową DATABASE_URL."
         )
 
-    # Supabase Pooler (PgBouncer) + stabilny schemat:
-    # - wymuszamy search_path=public
-    # - NullPool ogranicza problemy z pgbouncer (nie trzyma sesji)
+    # Supabase Pooler (PgBouncer) / stabilne zachowanie:
     return create_engine(
         db_url,
         future=True,
@@ -89,7 +51,9 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text(
+                """
             create table if not exists public.settings (
                 user_id bigint not null,
                 key text not null,
@@ -97,9 +61,13 @@ def ensure_schema():
                 updated_at timestamptz default now(),
                 primary key (user_id, key)
             );
-        """))
+        """
+            )
+        )
 
-        conn.execute(text("""
+        conn.execute(
+            text(
+                """
             create table if not exists public.daily (
                 user_id bigint not null,
                 day date not null,
@@ -135,37 +103,54 @@ def ensure_schema():
 
                 primary key (user_id, day)
             );
-        """))
+        """
+            )
+        )
 
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
-    row = conn.execute(
-        text("select value from public.settings where user_id=:uid and key=:k"),
-        {"uid": user_id, "k": key},
-    ).mappings().first()
+    row = (
+        conn.execute(
+            text("select value from public.settings where user_id=:uid and key=:k"),
+            {"uid": user_id, "k": key},
+        )
+        .mappings()
+        .first()
+    )
     return row["value"] if row else default
 
 
 def set_setting(conn, user_id: int, key: str, value: str):
-    conn.execute(text("""
+    conn.execute(
+        text(
+            """
         insert into public.settings (user_id, key, value, updated_at)
         values (:uid, :k, :v, now())
         on conflict (user_id, key)
         do update set value = excluded.value, updated_at = now()
-    """), {"uid": user_id, "k": key, "v": value})
+    """
+        ),
+        {"uid": user_id, "k": key, "v": value},
+    )
 
 
 def load_day(conn, user_id: int, d: date) -> dict | None:
-    row = conn.execute(
-        text("select * from public.daily where user_id=:uid and day=:d"),
-        {"uid": user_id, "d": d},
-    ).mappings().first()
+    row = (
+        conn.execute(
+            text("select * from public.daily where user_id=:uid and day=:d"),
+            {"uid": user_id, "d": d},
+        )
+        .mappings()
+        .first()
+    )
     return dict(row) if row else None
 
 
 def upsert_day(conn, user_id: int, d: date, payload: dict):
     payload = {**payload, "user_id": user_id, "day": d}
-    conn.execute(text("""
+    conn.execute(
+        text(
+            """
         insert into public.daily (
             user_id, day,
             kcal_m1, p_m1, c_m1, f_m1,
@@ -194,7 +179,10 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
             steps=excluded.steps, kcal_per_step=excluded.kcal_per_step, weight=excluded.weight,
             training_name=excluded.training_name, training_kcal=excluded.training_kcal,
             updated_at=now()
-    """), payload)
+    """
+        ),
+        payload,
+    )
 
 
 def delete_day(conn, user_id: int, d: date):
@@ -216,12 +204,61 @@ def load_history(conn, user_id: int) -> pd.DataFrame:
 
 
 # ----------------------------
+# FORM CLEAR (safe with rerun flag)
+# ----------------------------
+def clear_day_form(keep_kcal_per_step: bool = True):
+    numeric_keys = [
+        "entry_m1_kcal",
+        "entry_m1_p",
+        "entry_m1_c",
+        "entry_m1_f",
+        "entry_m2_kcal",
+        "entry_m2_p",
+        "entry_m2_c",
+        "entry_m2_f",
+        "entry_m3_kcal",
+        "entry_m3_p",
+        "entry_m3_c",
+        "entry_m3_f",
+        "entry_add_kcal",
+        "entry_add_p",
+        "entry_add_c",
+        "entry_add_f",
+        "entry_steps",
+        "entry_weight",
+        "entry_training_kcal",
+    ]
+    text_keys = ["entry_training_name"]
+
+    if not keep_kcal_per_step:
+        numeric_keys.append("entry_kcal_per_step")
+
+    for k in numeric_keys:
+        if k in st.session_state:
+            st.session_state[k] = 0
+
+    for k in text_keys:
+        if k in st.session_state:
+            st.session_state[k] = ""
+
+
+# ----------------------------
 # Color logic
 # ----------------------------
 def color_for(value: float, green_max: float, yellow_max: float) -> str:
     if value <= green_max:
         return "🟢"
     if value <= yellow_max:
+        return "🟡"
+    return "🔴"
+
+
+def macro_status(val: float, target: float) -> str:
+    g_lo, g_hi = 0.9 * target, 1.1 * target
+    y_lo, y_hi = 0.75 * target, 1.25 * target
+    if g_lo <= val <= g_hi:
+        return "🟢"
+    if (y_lo <= val < g_lo) or (g_hi < val <= y_hi):
         return "🟡"
     return "🔴"
 
@@ -242,7 +279,7 @@ def range_preview(kcal_target: float, protein_target: float, carbs_target: float
     s_g = steps_target
     s_y = max(0, steps_target - 2000)
 
-    st.markdown("### Przedziały kolorów")
+    st.markdown("### Przedziały kolorów (podgląd)")
     st.write(
         f"**Kalorie:** 🟢 ≤ {kcal_g:.0f} • 🟡 {kcal_g:.0f}-{kcal_y:.0f} • 🔴 > {kcal_y:.0f}\n\n"
         f"**Białko:** 🟢 {p[0]:.0f}-{p[1]:.0f} • 🟡 {p[2]:.0f}-{p[0]:.0f} lub {p[1]:.0f}-{p[3]:.0f} • 🔴 poza\n\n"
@@ -250,16 +287,6 @@ def range_preview(kcal_target: float, protein_target: float, carbs_target: float
         f"**Tłuszcz:** 🟢 {f[0]:.0f}-{f[1]:.0f} • 🟡 {f[2]:.0f}-{f[0]:.0f} lub {f[1]:.0f}-{f[3]:.0f} • 🔴 poza\n\n"
         f"**Kroki:** 🟢 ≥ {s_g} • 🟡 {s_y}-{s_g - 1 if s_g > 0 else 0} • 🔴 < {s_y}"
     )
-
-
-def macro_status(val: float, target: float) -> str:
-    g_lo, g_hi = 0.9 * target, 1.1 * target
-    y_lo, y_hi = 0.75 * target, 1.25 * target
-    if g_lo <= val <= g_hi:
-        return "🟢"
-    if (y_lo <= val < g_lo) or (g_hi < val <= y_hi):
-        return "🟡"
-    return "🔴"
 
 
 # ----------------------------
@@ -280,7 +307,11 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-   
+    with col2:
+        st.info(
+            "Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\n"
+            "Każdy profil ma osobne dane w bazie (user_id)."
+        )
 
 
 # ----------------------------
@@ -321,12 +352,14 @@ tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 # TAB: ENTRY
 # ----------------------------
 with tabs[0]:
-        # jeśli poprzedni klik kazał czyścić formularz – zrób to ZANIM powstaną widgety
+    # Czyść formularz *bez błędu StreamlitAPIException*:
+    # wykonujemy czyszczenie PRZED narysowaniem widgetów.
     if st.session_state.get("_do_clear_form", False):
         clear_day_form(keep_kcal_per_step=True)
         st.session_state["_do_clear_form"] = False
-        
+
     c_left, c_right = st.columns([2, 1])
+
     with c_right:
         range_preview(kcal_target, protein_target, carbs_target, fat_target, steps_target)
 
@@ -337,30 +370,38 @@ with tabs[0]:
         with eng.begin() as conn:
             existing = load_day(conn, USER_ID, d)
 
-        def ex(name, default=0.0):
+        def ex(name: str, default=0.0) -> float:
             if existing and existing.get(name) is not None:
                 return float(existing[name] or 0)
             return float(default)
 
-        def ex_int(name, default=0):
+        def ex_int(name: str, default=0) -> int:
             if existing and existing.get(name) is not None:
                 return int(existing[name] or 0)
             return int(default)
 
-        def ex_str(name, default=""):
+        def ex_str(name: str, default="") -> str:
             if existing and existing.get(name) is not None:
                 return str(existing[name] or "")
-            return default
+            return str(default)
 
         st.markdown("### Posiłki")
 
-        def meal_block(title, prefix):
+        def meal_block(title: str, prefix: str):
             st.markdown(f"**{title}**")
             c1, c2, c3, c4 = st.columns(4)
-            kcal = c1.number_input("kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=f"entry_{prefix}_kcal")
-            p = c2.number_input("B (g)", min_value=0.0, step=1.0, value=ex(f"p_{prefix}"), key=f"entry_{prefix}_p")
-            c = c3.number_input("W (g)", min_value=0.0, step=1.0, value=ex(f"c_{prefix}"), key=f"entry_{prefix}_c")
-            f = c4.number_input("T (g)", min_value=0.0, step=1.0, value=ex(f"f_{prefix}"), key=f"entry_{prefix}_f")
+            kcal = c1.number_input(
+                "kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=f"entry_{prefix}_kcal"
+            )
+            p = c2.number_input(
+                "B (g)", min_value=0.0, step=1.0, value=ex(f"p_{prefix}"), key=f"entry_{prefix}_p"
+            )
+            c = c3.number_input(
+                "W (g)", min_value=0.0, step=1.0, value=ex(f"c_{prefix}"), key=f"entry_{prefix}_c"
+            )
+            f = c4.number_input(
+                "T (g)", min_value=0.0, step=1.0, value=ex(f"f_{prefix}"), key=f"entry_{prefix}_f"
+            )
             return kcal, p, c, f
 
         kcal_m1, p_m1, c_m1, f_m1 = meal_block("1 posiłek", "m1")
@@ -371,12 +412,16 @@ with tabs[0]:
         st.markdown("### Aktywność")
         a1, a2, a3 = st.columns(3)
         steps = a1.number_input("Kroki", min_value=0, step=100, value=ex_int("steps"), key="entry_steps")
-        kcal_per_step = a2.number_input("kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step")
+        kcal_per_step = a2.number_input(
+            "kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step"
+        )
         weight = a3.number_input("Waga (kg)", min_value=0.0, step=0.1, value=ex("weight", 0.0), key="entry_weight")
 
         t1, t2 = st.columns([2, 1])
         training_name = t1.text_input("Trening (nazwa)", value=ex_str("training_name", ""), key="entry_training_name")
-        training_kcal = t2.number_input("Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal")
+        training_kcal = t2.number_input(
+            "Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal"
+        )
 
         kcal_food = kcal_m1 + kcal_m2 + kcal_m3 + kcal_add
         p_total = p_m1 + p_m2 + p_m3 + p_add
@@ -388,14 +433,14 @@ with tabs[0]:
 
         st.markdown("### Podsumowanie")
 
-        kcal_icon = color_for(kcal_food, kcal_target, kcal_target + 200)
-        p_icon = macro_status(p_total, protein_target)
-        c_icon = macro_status(c_total, carbs_target)
-        f_icon = macro_status(f_total, fat_target)
+        kcal_icon = color_for(float(kcal_food), kcal_target, kcal_target + 200)
+        p_icon = macro_status(float(p_total), protein_target)
+        c_icon = macro_status(float(c_total), carbs_target)
+        f_icon = macro_status(float(f_total), fat_target)
 
-        if steps >= steps_target:
+        if int(steps) >= steps_target:
             s_icon = "🟢"
-        elif steps >= max(0, steps_target - 2000):
+        elif int(steps) >= max(0, steps_target - 2000):
             s_icon = "🟡"
         else:
             s_icon = "🔴"
@@ -419,30 +464,39 @@ with tabs[0]:
             clear_clicked = st.button("🧹 Wyczyść pola")
 
         if clear_clicked:
-            clear_day_form(keep_kcal_per_step=True)
+            st.session_state["_do_clear_form"] = True
             st.rerun()
 
-       if clear_clicked:
-    st.session_state["_do_clear_form"] = True
-    st.rerun()
+        if save_clicked:
+            payload = dict(
+                kcal_m1=float(kcal_m1),
+                p_m1=float(p_m1),
+                c_m1=float(c_m1),
+                f_m1=float(f_m1),
+                kcal_m2=float(kcal_m2),
+                p_m2=float(p_m2),
+                c_m2=float(c_m2),
+                f_m2=float(f_m2),
+                kcal_m3=float(kcal_m3),
+                p_m3=float(p_m3),
+                c_m3=float(c_m3),
+                f_m3=float(f_m3),
+                kcal_add=float(kcal_add),
+                p_add=float(p_add),
+                c_add=float(c_add),
+                f_add=float(f_add),
+                steps=int(steps),
+                kcal_per_step=float(kcal_per_step),
+                weight=float(weight) if float(weight) > 0 else None,
+                training_name=training_name.strip() if training_name.strip() else None,
+                training_kcal=float(training_kcal),
+            )
+            with eng.begin() as conn:
+                upsert_day(conn, USER_ID, d, payload)
 
-if save_clicked:
-    payload = dict(
-        kcal_m1=kcal_m1, p_m1=p_m1, c_m1=c_m1, f_m1=f_m1,
-        kcal_m2=kcal_m2, p_m2=p_m2, c_m2=c_m2, f_m2=f_m2,
-        kcal_m3=kcal_m3, p_m3=p_m3, c_m3=c_m3, f_m3=f_m3,
-        kcal_add=kcal_add, p_add=p_add, c_add=c_add, f_add=f_add,
-        steps=int(steps), kcal_per_step=float(kcal_per_step),
-        weight=float(weight) if weight > 0 else None,
-        training_name=training_name if training_name.strip() else None,
-        training_kcal=float(training_kcal),
-    )
-    with eng.begin() as conn:
-        upsert_day(conn, USER_ID, d, payload)
-
-    st.session_state["_do_clear_form"] = True
-    st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
-    st.rerun()
+            st.session_state["_do_clear_form"] = True
+            st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
+            st.rerun()
 
 # ----------------------------
 # TAB: HISTORY
@@ -459,11 +513,7 @@ with tabs[1]:
         df["day"] = pd.to_datetime(df["day"])
 
         months = (
-            df["day"].dt.to_period("M")
-            .astype(str)
-            .sort_values(ascending=False)
-            .unique()
-            .tolist()
+            df["day"].dt.to_period("M").astype(str).sort_values(ascending=False).unique().tolist()
         )
 
         if "hist_month_choice" not in st.session_state:
@@ -512,27 +562,47 @@ with tabs[1]:
                 lambda s: "🟢" if int(s) >= steps_target else ("🟡" if int(s) >= max(0, steps_target - 2000) else "🔴")
             )
 
-            show = df[[
-                "day", "steps", "kcal_kroki", "training_kcal", "weight",
-                "kcal_jedzenie", "kcal_netto", "B", "W", "T",
-                "kcal_status", "B_status", "W_status", "T_status", "kroki_status"
-            ]].rename(columns={
-                "day": "Data",
-                "steps": "Kroki",
-                "kcal_kroki": "kcal kroki",
-                "training_kcal": "kcal trening",
-                "weight": "Waga (kg)",
-                "kcal_jedzenie": "kcal jedzenie",
-                "kcal_netto": "kcal netto",
-                "B": "B (g)",
-                "W": "W (g)",
-                "T": "T (g)",
-                "kcal_status": "kcal 🔥",
-                "B_status": "B ✅",
-                "W_status": "W ✅",
-                "T_status": "T ✅",
-                "kroki_status": "kroki 🚶",
-            }).sort_values("Data", ascending=False)
+            show = (
+                df[
+                    [
+                        "day",
+                        "steps",
+                        "kcal_kroki",
+                        "training_kcal",
+                        "weight",
+                        "kcal_jedzenie",
+                        "kcal_netto",
+                        "B",
+                        "W",
+                        "T",
+                        "kcal_status",
+                        "B_status",
+                        "W_status",
+                        "T_status",
+                        "kroki_status",
+                    ]
+                ]
+                .rename(
+                    columns={
+                        "day": "Data",
+                        "steps": "Kroki",
+                        "kcal_kroki": "kcal kroki",
+                        "training_kcal": "kcal trening",
+                        "weight": "Waga (kg)",
+                        "kcal_jedzenie": "kcal jedzenie",
+                        "kcal_netto": "kcal netto",
+                        "B": "B (g)",
+                        "W": "W (g)",
+                        "T": "T (g)",
+                        "kcal_status": "kcal 🔥",
+                        "B_status": "B ✅",
+                        "W_status": "W ✅",
+                        "T_status": "T ✅",
+                        "kroki_status": "kroki 🚶",
+                    }
+                )
+                .sort_values("Data", ascending=False)
+            )
 
             fmt = {
                 "Kroki": "{:.0f}",
@@ -546,17 +616,17 @@ with tabs[1]:
                 "T (g)": "{:.0f}",
             }
 
-            st.dataframe(
-                show.style.format(fmt, na_rep=""),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(show.style.format(fmt, na_rep=""), use_container_width=True, hide_index=True)
 
             st.markdown("---")
             st.write("Usuń wybrany dzień (tylko dla zalogowanego profilu):")
             col_a, col_b = st.columns([2, 1])
             with col_a:
-                dd = st.date_input("Wybierz datę do usunięcia", value=show["Data"].max().date(), key="hist_del_date")
+                dd = st.date_input(
+                    "Wybierz datę do usunięcia",
+                    value=show["Data"].max().date(),
+                    key="hist_del_date",
+                )
             with col_b:
                 if st.button("🗑️ Usuń dzień", type="secondary"):
                     with eng.begin() as conn:
@@ -577,8 +647,8 @@ with tabs[2]:
     else:
         df = df.copy()
         df["day"] = pd.to_datetime(df["day"])
-
         df = df.sort_values("day")
+
         min_d = df["day"].min().date()
         max_d = df["day"].max().date()
 
@@ -589,6 +659,7 @@ with tabs[2]:
             max_value=max_d,
             key="charts_range",
         )
+
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_d, end_d = date_range
         else:
@@ -660,7 +731,6 @@ with tabs[3]:
             set_setting(conn, USER_ID, "carbs_target", str(float(new_c)))
             set_setting(conn, USER_ID, "fat_target", str(float(new_f)))
             set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
+
         st.success("Zapisano ustawienia ✅")
         st.rerun()
-
-
