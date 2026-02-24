@@ -311,7 +311,21 @@ if "user_id" not in st.session_state:
 
 USER_ID = int(st.session_state["user_id"])
 USER_NAME = st.session_state["user_name"]
+# --- RESET FORMULARZA PO RESTARTE / PRZELOGOWANIU ---
+# Streamlit zapamiętuje widgety po key w session_state.
+# To czyści wartości wpisów tak, żeby po odświeżeniu/relogowaniu było 0.
+if st.session_state.get("_active_user_id") != USER_ID:
+    # nowy user (lub pierwszy raz)
+    clear_day_form(keep_kcal_per_step=True)
+    st.session_state["entry_date"] = date.today()
+    st.session_state["_active_user_id"] = USER_ID
 
+# przy starcie sesji (np. restart aplikacji / odświeżenie) - nie pokazuj ostatnich wpisów
+if not st.session_state.get("_session_inited", False):
+    clear_day_form(keep_kcal_per_step=True)
+    st.session_state["entry_date"] = date.today()
+    st.session_state["_session_inited"] = True
+    
 st.title("🍽️ Fit Tracker")
 st.caption("Wpisy dzienne • Historia • Wykresy • Cele")
 
@@ -746,4 +760,5 @@ with tabs[3]:
         except Exception as e:
             st.error("Nie udało się zapisać ustawień.")
             st.exception(e)
+
 
