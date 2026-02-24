@@ -23,10 +23,8 @@ USERS = {
 # DB helpers
 # ----------------------------
 def get_database_url() -> str | None:
-    # Streamlit Cloud: st.secrets["DATABASE_URL"]
     if "DATABASE_URL" in st.secrets:
         return st.secrets["DATABASE_URL"]
-    # Local: env var
     return os.environ.get("DATABASE_URL")
 
 
@@ -44,13 +42,14 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
+        # Uwaga: kolumny "key" i "value" cytowane dla kompatybilności
         conn.execute(text("""
             create table if not exists settings (
                 user_id bigint not null,
-                key text not null,
-                value text not null,
+                "key" text not null,
+                "value" text not null,
                 updated_at timestamptz default now(),
-                primary key (user_id, key)
+                primary key (user_id, "key")
             );
         """))
 
@@ -95,7 +94,7 @@ def ensure_schema():
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = conn.execute(
-        text("select value from settings where user_id=:uid and key=:k"),
+        text('select "value" from settings where user_id=:uid and "key"=:k'),
         {"uid": user_id, "k": key},
     ).mappings().first()
     return row["value"] if row else default
@@ -103,10 +102,10 @@ def get_setting(conn, user_id: int, key: str, default: str) -> str:
 
 def set_setting(conn, user_id: int, key: str, value: str):
     conn.execute(text("""
-        insert into settings (user_id, key, value, updated_at)
+        insert into settings (user_id, "key", "value", updated_at)
         values (:uid, :k, :v, now())
-        on conflict (user_id, key)
-        do update set value = excluded.value, updated_at = now()
+        on conflict (user_id, "key")
+        do update set "value" = excluded."value", updated_at = now()
     """), {"uid": user_id, "k": key, "v": value})
 
 
@@ -379,7 +378,6 @@ with tabs[0]:
                 upsert_day(conn, USER_ID, d, payload)
             st.success(f"Zapisano dzień {d} ✅")
 
-
 # ----------------------------
 # TAB: HISTORY
 # ----------------------------
@@ -394,8 +392,6 @@ with tabs[1]:
         df = df.copy()
         df["day"] = pd.to_datetime(df["day"])
 
-        # --- SZYBKIE PRZYCISKI + WYBÓR MIESIĄCA ---
-        # Lista miesięcy dostępnych w danych
         months = (
             df["day"].dt.to_period("M")
             .astype(str)
@@ -404,11 +400,9 @@ with tabs[1]:
             .tolist()
         )
 
-        # Stan filtrowania miesiąca
         if "hist_month_choice" not in st.session_state:
             st.session_state["hist_month_choice"] = "Wszystko"
 
-        # Przyciski
         b1, b2, b3 = st.columns(3)
         with b1:
             if st.button("📅 Ten miesiąc", key="hist_btn_this"):
@@ -420,16 +414,15 @@ with tabs[1]:
             if st.button("♾️ Wszystko", key="hist_btn_all"):
                 st.session_state["hist_month_choice"] = "Wszystko"
 
+        options = ["Wszystko"] + months
         chosen_month = st.selectbox(
             "Pokaż miesiąc",
-            ["Wszystko"] + months,
-            index=(["Wszystko"] + months).index(st.session_state["hist_month_choice"])
-            if st.session_state["hist_month_choice"] in (["Wszystko"] + months)
+            options,
+            index=options.index(st.session_state["hist_month_choice"])
+            if st.session_state["hist_month_choice"] in options
             else 0,
             key="hist_month_selectbox",
         )
-
-        # Synchronizacja selectbox -> session_state
         st.session_state["hist_month_choice"] = chosen_month
 
         if chosen_month != "Wszystko":
@@ -438,7 +431,6 @@ with tabs[1]:
         if df.empty:
             st.info("Brak danych w wybranym miesiącu.")
         else:
-            # compute derived columns
             df["kcal_jedzenie"] = df["kcal_m1"] + df["kcal_m2"] + df["kcal_m3"] + df["kcal_add"]
             df["B"] = df["p_m1"] + df["p_m2"] + df["p_m3"] + df["p_add"]
             df["W"] = df["c_m1"] + df["c_m2"] + df["c_m3"] + df["c_add"]
@@ -446,7 +438,6 @@ with tabs[1]:
             df["kcal_kroki"] = df["steps"].fillna(0) * df["kcal_per_step"].fillna(0.04)
             df["kcal_netto"] = df["kcal_jedzenie"] - df["kcal_kroki"] - df["training_kcal"].fillna(0)
 
-            # status icons for table
             df["kcal_status"] = df["kcal_jedzenie"].apply(lambda x: color_for(float(x), kcal_target, kcal_target + 200))
             df["B_status"] = df["B"].apply(lambda x: macro_status(float(x), protein_target))
             df["W_status"] = df["W"].apply(lambda x: macro_status(float(x), carbs_target))
@@ -477,7 +468,6 @@ with tabs[1]:
                 "kroki_status": "kroki 🚶",
             }).sort_values("Data", ascending=False)
 
-            # --- FORMATOWANIE (bez 0.000000) ---
             fmt = {
                 "Kroki": "{:.0f}",
                 "kcal kroki": "{:.0f}",
@@ -508,7 +498,6 @@ with tabs[1]:
                     st.success(f"Usunięto {dd} ✅")
                     st.rerun()
 
-
 # ----------------------------
 # TAB: CHARTS
 # ----------------------------
@@ -527,7 +516,6 @@ with tabs[2]:
         df["W"] = df["c_m1"] + df["c_m2"] + df["c_m3"] + df["c_add"]
         df["T"] = df["f_m1"] + df["f_m2"] + df["f_m3"] + df["f_add"]
 
-        # --- ZAKRES DAT DO WYKRESÓW ---
         df = df.sort_values("day")
         min_d = df["day"].min().date()
         max_d = df["day"].max().date()
@@ -539,7 +527,6 @@ with tabs[2]:
             max_value=max_d,
             key="charts_range",
         )
-
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_d, end_d = date_range
         else:
@@ -587,7 +574,6 @@ with tabs[2]:
 
             delta_kg = float(wdf["weight"].iloc[-1]) - float(wdf["weight"].iloc[0])
             st.metric("Zmiana wagi od pierwszego pomiaru (w zakresie)", f"{delta_kg:+.1f} kg")
-
 
 # ----------------------------
 # TAB: SETTINGS
