@@ -50,6 +50,20 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
+        # ✅ FIX: jeśli masz FK daily.user_id -> users(id), musisz mieć tabelę users i rekordy
+        conn.execute(text("""
+            create table if not exists public.users (
+                id bigint primary key,
+                username text unique,
+                created_at timestamptz default now()
+            );
+        """))
+        conn.execute(text("""
+            insert into public.users (id, username)
+            values (1, 'Kacper'), (2, 'Klaudia')
+            on conflict (id) do update set username = excluded.username;
+        """))
+
         # settings
         conn.execute(text("""
             create table if not exists public.settings (
@@ -277,7 +291,8 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-    
+    with col2:
+        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy profil ma osobne dane w bazie (user_id).")
 
 
 # ----------------------------
@@ -330,7 +345,6 @@ with eng.begin() as conn:
 
 tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 
-
 # ----------------------------
 # TAB: ENTRY
 # ----------------------------
@@ -343,11 +357,9 @@ with tabs[0]:
     with c_left:
         st.subheader("Wpis dnia")
 
-        # data (zawsze świeża po form_version)
         d = st.date_input("Data", value=date.today(), key=fv_key("entry_date"))
 
-        # 🔥 KLUCZOWA ZMIANA:
-        # Domyślnie NIE wczytuj danych z bazy po zalogowaniu/resecie formularza
+        # checkbox zostaje ✅
         load_saved = st.checkbox(
             "Wczytaj zapisane dane dla tej daty",
             value=False,
@@ -743,4 +755,5 @@ with tabs[3]:
         except Exception as e:
             st.error("Nie udało się zapisać ustawień.")
             st.exception(e)
+
 
