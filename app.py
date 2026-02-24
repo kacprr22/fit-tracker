@@ -29,6 +29,42 @@ def get_database_url() -> str | None:
     return os.environ.get("DATABASE_URL")
 
 
+def clear_day_form(keep_kcal_per_step: bool = True):
+    """
+    Czyści pola formularza (Wpis), bez kasowania danych w bazie.
+    Domyślnie zostawia kcal/krok (bo zwykle jest stałe).
+    """
+    keys_to_clear_numeric = [
+        # posiłek 1
+        "entry_m1_kcal", "entry_m1_p", "entry_m1_c", "entry_m1_f",
+        # posiłek 2
+        "entry_m2_kcal", "entry_m2_p", "entry_m2_c", "entry_m2_f",
+        # posiłek 3
+        "entry_m3_kcal", "entry_m3_p", "entry_m3_c", "entry_m3_f",
+        # dodatki
+        "entry_add_kcal", "entry_add_p", "entry_add_c", "entry_add_f",
+        # aktywność
+        "entry_steps", "entry_weight",
+        # trening
+        "entry_training_kcal",
+    ]
+
+    keys_to_clear_text = [
+        "entry_training_name",
+    ]
+
+    if not keep_kcal_per_step:
+        keys_to_clear_numeric.append("entry_kcal_per_step")
+
+    for key in keys_to_clear_numeric:
+        if key in st.session_state:
+            st.session_state[key] = 0
+
+    for key in keys_to_clear_text:
+        if key in st.session_state:
+            st.session_state[key] = ""
+
+
 @st.cache_resource
 def get_engine():
     db_url = get_database_url()
@@ -53,7 +89,6 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
-        # jawnie public.*
         conn.execute(text("""
             create table if not exists public.settings (
                 user_id bigint not null,
@@ -245,7 +280,8 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-    
+    with col2:
+        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy ma osobne dane w bazie (user_id).")
 
 
 # ----------------------------
@@ -372,7 +408,17 @@ with tabs[0]:
             f"{p_icon} białko • {c_icon} węgle • {f_icon} tłuszcz • {s_icon} kroki"
         )
 
-        if st.button("💾 Zapisz dzień", type="primary"):
+        btn1, btn2 = st.columns([1, 1])
+        with btn1:
+            save_clicked = st.button("💾 Zapisz dzień", type="primary")
+        with btn2:
+            clear_clicked = st.button("🧹 Wyczyść pola")
+
+        if clear_clicked:
+            clear_day_form(keep_kcal_per_step=True)
+            st.rerun()
+
+        if save_clicked:
             payload = dict(
                 kcal_m1=kcal_m1, p_m1=p_m1, c_m1=c_m1, f_m1=f_m1,
                 kcal_m2=kcal_m2, p_m2=p_m2, c_m2=c_m2, f_m2=f_m2,
@@ -385,7 +431,10 @@ with tabs[0]:
             )
             with eng.begin() as conn:
                 upsert_day(conn, USER_ID, d, payload)
-            st.success(f"Zapisano dzień {d} ✅")
+
+            clear_day_form(keep_kcal_per_step=True)
+            st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
+            st.rerun()
 
 # ----------------------------
 # TAB: HISTORY
@@ -605,4 +654,3 @@ with tabs[3]:
             set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
         st.success("Zapisano ustawienia ✅")
         st.rerun()
-
