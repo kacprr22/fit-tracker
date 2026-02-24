@@ -103,15 +103,17 @@ def ensure_schema():
 
                 primary key (user_id, day)
             );
-        """
+     
             )
+            
         )
 
         # --- POMIARY CIAŁA: bezpieczna migracja dla istniejącej tabeli ---
         conn.execute(text("""alter table public.daily add column if not exists waist_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists biceps_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists chest_cm numeric;"""))
-
+        conn.execute(text("""alter table public.settings add column if not exists updated_at timestamptz;"""))
+        conn.execute(text("""alter table public.settings alter column updated_at set default now();"""))
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = (
@@ -795,5 +797,6 @@ if st.button("💾 Zapisz ustawienia", type="primary"):
     except Exception as e:
         st.error("Nie udało się zapisać ustawień.")
         st.exception(e)
+
 
 
