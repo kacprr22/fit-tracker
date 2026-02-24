@@ -50,99 +50,59 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
-        # --- USERS (żeby działał FK daily.user_id -> users.id jeśli masz go w DB) ---
-        conn.execute(
-            text(
-                """
-                create table if not exists public.users (
-                    id bigint primary key,
-                    username text unique not null,
-                    created_at timestamptz default now()
-                );
-                """
-            )
-        )
-        # seed dwóch userów (id muszą pasować do USERS)
-        conn.execute(
-            text(
-                """
-                insert into public.users (id, username)
-                values (1, 'Kacper')
-                on conflict (id) do update set username=excluded.username;
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
-                insert into public.users (id, username)
-                values (2, 'Klaudia')
-                on conflict (id) do update set username=excluded.username;
-                """
-            )
-        )
-
         # settings
-        conn.execute(
-            text(
-                """
-                create table if not exists public.settings (
-                    user_id bigint not null,
-                    key text not null,
-                    value text not null,
-                    updated_at timestamptz default now(),
-                    primary key (user_id, key)
-                );
-                """
-            )
-        )
+        conn.execute(text("""
+            create table if not exists public.settings (
+                user_id bigint not null,
+                key text not null,
+                value text not null,
+                updated_at timestamptz default now(),
+                primary key (user_id, key)
+            );
+        """))
 
         # migracja updated_at (jeśli stara tabela nie miała)
         conn.execute(text("""alter table public.settings add column if not exists updated_at timestamptz;"""))
         conn.execute(text("""alter table public.settings alter column updated_at set default now();"""))
 
         # daily
-        conn.execute(
-            text(
-                """
-                create table if not exists public.daily (
-                    user_id bigint not null,
-                    day date not null,
+        conn.execute(text("""
+            create table if not exists public.daily (
+                user_id bigint not null,
+                day date not null,
 
-                    kcal_m1 numeric default 0,
-                    p_m1 numeric default 0,
-                    c_m1 numeric default 0,
-                    f_m1 numeric default 0,
+                kcal_m1 numeric default 0,
+                p_m1 numeric default 0,
+                c_m1 numeric default 0,
+                f_m1 numeric default 0,
 
-                    kcal_m2 numeric default 0,
-                    p_m2 numeric default 0,
-                    c_m2 numeric default 0,
-                    f_m2 numeric default 0,
+                kcal_m2 numeric default 0,
+                p_m2 numeric default 0,
+                c_m2 numeric default 0,
+                f_m2 numeric default 0,
 
-                    kcal_m3 numeric default 0,
-                    p_m3 numeric default 0,
-                    c_m3 numeric default 0,
-                    f_m3 numeric default 0,
+                kcal_m3 numeric default 0,
+                p_m3 numeric default 0,
+                c_m3 numeric default 0,
+                f_m3 numeric default 0,
 
-                    kcal_add numeric default 0,
-                    p_add numeric default 0,
-                    c_add numeric default 0,
-                    f_add numeric default 0,
+                kcal_add numeric default 0,
+                p_add numeric default 0,
+                c_add numeric default 0,
+                f_add numeric default 0,
 
-                    steps integer default 0,
-                    kcal_per_step numeric default 0.04,
-                    weight numeric,
-                    training_name text,
-                    training_kcal numeric default 0,
+                steps integer default 0,
+                kcal_per_step numeric default 0.04,
+                weight numeric,
+                training_name text,
+                training_kcal numeric default 0,
 
-                    created_at timestamptz default now(),
-                    updated_at timestamptz default now(),
+                created_at timestamptz default now(),
+                updated_at timestamptz default now(),
 
-                    primary key (user_id, day)
-                );
-                """
-            )
-        )
+                primary key (user_id, day)
+            );
+        """))
 
         # Pomiary ciała (migracja)
         conn.execute(text("""alter table public.daily add column if not exists waist_cm numeric;"""))
@@ -164,14 +124,12 @@ def get_setting(conn, user_id: int, key: str, default: str) -> str:
 
 def set_setting(conn, user_id: int, key: str, value: str):
     conn.execute(
-        text(
-            """
+        text("""
             insert into public.settings (user_id, "key", "value", updated_at)
             values (:uid, :k, :v, now())
             on conflict (user_id, "key")
             do update set "value" = excluded."value", updated_at = now()
-            """
-        ),
+        """),
         {"uid": user_id, "k": key, "v": value},
     )
 
@@ -191,8 +149,7 @@ def load_day(conn, user_id: int, d: date) -> dict | None:
 def upsert_day(conn, user_id: int, d: date, payload: dict):
     payload = {**payload, "user_id": user_id, "day": d}
     conn.execute(
-        text(
-            """
+        text("""
             insert into public.daily (
                 user_id, day,
                 kcal_m1, p_m1, c_m1, f_m1,
@@ -224,8 +181,7 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
                 training_name=excluded.training_name, training_kcal=excluded.training_kcal,
                 waist_cm=excluded.waist_cm, biceps_cm=excluded.biceps_cm, chest_cm=excluded.chest_cm,
                 updated_at=now()
-            """
-        ),
+        """),
         payload,
     )
 
@@ -375,6 +331,7 @@ with eng.begin() as conn:
 
 tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 
+
 # ----------------------------
 # TAB: ENTRY
 # ----------------------------
@@ -387,9 +344,11 @@ with tabs[0]:
     with c_left:
         st.subheader("Wpis dnia")
 
+        # data (zawsze świeża po form_version)
         d = st.date_input("Data", value=date.today(), key=fv_key("entry_date"))
 
-        # checkbox zostaje (domyślnie OFF)
+        # 🔥 KLUCZOWA ZMIANA:
+        # Domyślnie NIE wczytuj danych z bazy po zalogowaniu/resecie formularza
         load_saved = st.checkbox(
             "Wczytaj zapisane dane dla tej daty",
             value=False,
@@ -483,15 +442,21 @@ with tabs[0]:
             f"{p_icon} białko • {c_icon} węgle • {f_icon} tłuszcz • {s_icon} kroki"
         )
 
-        # ✅ TUTAJ usunięty przycisk "📥 Wczytaj zapisane dane"
-        btn1, btn2 = st.columns([1, 1])
+        btn1, btn2, btn3 = st.columns([1, 1, 1])
         with btn1:
             save_clicked = st.button("💾 Zapisz dzień", type="primary")
         with btn2:
             clear_clicked = st.button("🧹 Wyczyść pola")
+        with btn3:
+            load_clicked = st.button("📥 Wczytaj zapisane dane")
 
         if clear_clicked:
             st.session_state["form_version"] += 1
+            st.rerun()
+
+        if load_clicked:
+            # wymuś zaznaczenie checkboxa i odśwież
+            st.session_state[fv_key("entry_load_saved")] = True
             st.rerun()
 
         if save_clicked:
@@ -515,6 +480,7 @@ with tabs[0]:
             st.session_state["form_version"] += 1
             st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
             st.rerun()
+
 
 # ----------------------------
 # TAB: HISTORY
@@ -578,11 +544,9 @@ with tabs[1]:
 
             show = (
                 df[
-                    [
-                        "day", "steps", "kcal_kroki", "training_kcal", "weight",
-                        "kcal_jedzenie", "kcal_netto", "B", "W", "T",
-                        "kcal_status", "B_status", "W_status", "T_status", "kroki_status"
-                    ]
+                    ["day", "steps", "kcal_kroki", "training_kcal", "weight",
+                     "kcal_jedzenie", "kcal_netto", "B", "W", "T",
+                     "kcal_status", "B_status", "W_status", "T_status", "kroki_status"]
                 ]
                 .rename(
                     columns={
@@ -631,6 +595,7 @@ with tabs[1]:
                         delete_day(conn, USER_ID, dd)
                     st.success(f"Usunięto {dd} ✅")
                     st.rerun()
+
 
 # ----------------------------
 # TAB: CHARTS
