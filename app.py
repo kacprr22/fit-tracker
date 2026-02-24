@@ -51,9 +51,8 @@ def get_engine():
 def ensure_schema():
     eng = get_engine()
     with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
+        # settings
+        conn.execute(text("""
             create table if not exists public.settings (
                 user_id bigint not null,
                 key text not null,
@@ -61,13 +60,14 @@ def ensure_schema():
                 updated_at timestamptz default now(),
                 primary key (user_id, key)
             );
-        """
-            )
-        )
+        """))
 
-        conn.execute(
-            text(
-                """
+        # jeśli tabela settings już istniała kiedyś bez updated_at
+        conn.execute(text("""alter table public.settings add column if not exists updated_at timestamptz;"""))
+        conn.execute(text("""alter table public.settings alter column updated_at set default now();"""))
+
+        # daily
+        conn.execute(text("""
             create table if not exists public.daily (
                 user_id bigint not null,
                 day date not null,
@@ -103,17 +103,13 @@ def ensure_schema():
 
                 primary key (user_id, day)
             );
-     
-            )
-            
-        )
+        """))
 
         # --- POMIARY CIAŁA: bezpieczna migracja dla istniejącej tabeli ---
         conn.execute(text("""alter table public.daily add column if not exists waist_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists biceps_cm numeric;"""))
         conn.execute(text("""alter table public.daily add column if not exists chest_cm numeric;"""))
-        conn.execute(text("""alter table public.settings add column if not exists updated_at timestamptz;"""))
-        conn.execute(text("""alter table public.settings alter column updated_at set default now();"""))
+
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = (
@@ -129,14 +125,12 @@ def get_setting(conn, user_id: int, key: str, default: str) -> str:
 
 def set_setting(conn, user_id: int, key: str, value: str):
     conn.execute(
-        text(
-            """
-        insert into public.settings (user_id, "key", "value", updated_at)
-        values (:uid, :k, :v, now())
-        on conflict (user_id, "key")
-        do update set "value" = excluded."value", updated_at = now()
-        """
-        ),
+        text("""
+            insert into public.settings (user_id, "key", "value", updated_at)
+            values (:uid, :k, :v, now())
+            on conflict (user_id, "key")
+            do update set "value" = excluded."value", updated_at = now()
+        """),
         {"uid": user_id, "k": key, "v": value},
     )
 
@@ -156,40 +150,39 @@ def load_day(conn, user_id: int, d: date) -> dict | None:
 def upsert_day(conn, user_id: int, d: date, payload: dict):
     payload = {**payload, "user_id": user_id, "day": d}
     conn.execute(
-        text(
-            """
-        insert into public.daily (
-            user_id, day,
-            kcal_m1, p_m1, c_m1, f_m1,
-            kcal_m2, p_m2, c_m2, f_m2,
-            kcal_m3, p_m3, c_m3, f_m3,
-            kcal_add, p_add, c_add, f_add,
-            steps, kcal_per_step, weight,
-            training_name, training_kcal,
-            waist_cm, biceps_cm, chest_cm,
-            updated_at
-        ) values (
-            :user_id, :day,
-            :kcal_m1, :p_m1, :c_m1, :f_m1,
-            :kcal_m2, :p_m2, :c_m2, :f_m2,
-            :kcal_m3, :p_m3, :c_m3, :f_m3,
-            :kcal_add, :p_add, :c_add, :f_add,
-            :steps, :kcal_per_step, :weight,
-            :training_name, :training_kcal,
-            :waist_cm, :biceps_cm, :chest_cm,
-            now()
-        )
-        on conflict (user_id, day)
-        do update set
-            kcal_m1=excluded.kcal_m1, p_m1=excluded.p_m1, c_m1=excluded.c_m1, f_m1=excluded.f_m1,
-            kcal_m2=excluded.kcal_m2, p_m2=excluded.p_m2, c_m2=excluded.c_m2, f_m2=excluded.f_m2,
-            kcal_m3=excluded.kcal_m3, p_m3=excluded.p_m3, c_m3=excluded.c_m3, f_m3=excluded.f_m3,
-            kcal_add=excluded.kcal_add, p_add=excluded.p_add, c_add=excluded.c_add, f_add=excluded.f_add,
-            steps=excluded.steps, kcal_per_step=excluded.kcal_per_step, weight=excluded.weight,
-            training_name=excluded.training_name, training_kcal=excluded.training_kcal,
-            waist_cm=excluded.waist_cm, biceps_cm=excluded.biceps_cm, chest_cm=excluded.chest_cm,
-            updated_at=now()
-        ),
+        text("""
+            insert into public.daily (
+                user_id, day,
+                kcal_m1, p_m1, c_m1, f_m1,
+                kcal_m2, p_m2, c_m2, f_m2,
+                kcal_m3, p_m3, c_m3, f_m3,
+                kcal_add, p_add, c_add, f_add,
+                steps, kcal_per_step, weight,
+                training_name, training_kcal,
+                waist_cm, biceps_cm, chest_cm,
+                updated_at
+            ) values (
+                :user_id, :day,
+                :kcal_m1, :p_m1, :c_m1, :f_m1,
+                :kcal_m2, :p_m2, :c_m2, :f_m2,
+                :kcal_m3, :p_m3, :c_m3, :f_m3,
+                :kcal_add, :p_add, :c_add, :f_add,
+                :steps, :kcal_per_step, :weight,
+                :training_name, :training_kcal,
+                :waist_cm, :biceps_cm, :chest_cm,
+                now()
+            )
+            on conflict (user_id, day)
+            do update set
+                kcal_m1=excluded.kcal_m1, p_m1=excluded.p_m1, c_m1=excluded.c_m1, f_m1=excluded.f_m1,
+                kcal_m2=excluded.kcal_m2, p_m2=excluded.p_m2, c_m2=excluded.c_m2, f_m2=excluded.f_m2,
+                kcal_m3=excluded.kcal_m3, p_m3=excluded.p_m3, c_m3=excluded.c_m3, f_m3=excluded.f_m3,
+                kcal_add=excluded.kcal_add, p_add=excluded.p_add, c_add=excluded.c_add, f_add=excluded.f_add,
+                steps=excluded.steps, kcal_per_step=excluded.kcal_per_step, weight=excluded.weight,
+                training_name=excluded.training_name, training_kcal=excluded.training_kcal,
+                waist_cm=excluded.waist_cm, biceps_cm=excluded.biceps_cm, chest_cm=excluded.chest_cm,
+                updated_at=now()
+        """),
         payload,
     )
 
@@ -213,33 +206,17 @@ def load_history(conn, user_id: int) -> pd.DataFrame:
 
 
 # ----------------------------
-# FORM CLEAR (safe with rerun flag)
+# FORM CLEAR
 # ----------------------------
 def clear_day_form(keep_kcal_per_step: bool = True):
     numeric_keys = [
-        "entry_m1_kcal",
-        "entry_m1_p",
-        "entry_m1_c",
-        "entry_m1_f",
-        "entry_m2_kcal",
-        "entry_m2_p",
-        "entry_m2_c",
-        "entry_m2_f",
-        "entry_m3_kcal",
-        "entry_m3_p",
-        "entry_m3_c",
-        "entry_m3_f",
-        "entry_add_kcal",
-        "entry_add_p",
-        "entry_add_c",
-        "entry_add_f",
-        "entry_steps",
-        "entry_training_kcal",
+        "entry_m1_kcal", "entry_m1_p", "entry_m1_c", "entry_m1_f",
+        "entry_m2_kcal", "entry_m2_p", "entry_m2_c", "entry_m2_f",
+        "entry_m3_kcal", "entry_m3_p", "entry_m3_c", "entry_m3_f",
+        "entry_add_kcal", "entry_add_p", "entry_add_c", "entry_add_f",
+        "entry_steps", "entry_training_kcal",
         # pomiary ciała
-        "entry_weight_body",
-        "entry_waist",
-        "entry_biceps",
-        "entry_chest",
+        "entry_weight_body", "entry_waist", "entry_biceps", "entry_chest",
     ]
     text_keys = ["entry_training_name"]
 
@@ -320,7 +297,9 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-  
+    with col2:
+        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy profil ma osobne dane w bazie (user_id).")
+
 
 # ----------------------------
 # MAIN
@@ -355,6 +334,7 @@ with eng.begin() as conn:
     steps_target = int(float(get_setting(conn, USER_ID, "steps_target", "8000")))
 
 tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
+
 
 # ----------------------------
 # TAB: ENTRY
@@ -396,18 +376,10 @@ with tabs[0]:
         def meal_block(title: str, prefix: str):
             st.markdown(f"**{title}**")
             c1, c2, c3, c4 = st.columns(4)
-            kcal = c1.number_input(
-                "kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=f"entry_{prefix}_kcal"
-            )
-            p = c2.number_input(
-                "B (g)", min_value=0.0, step=0.1, value=ex(f"p_{prefix}"), key=f"entry_{prefix}_p"
-            )
-            c = c3.number_input(
-                "W (g)", min_value=0.0, step=0.1, value=ex(f"c_{prefix}"), key=f"entry_{prefix}_c"
-            )
-            f = c4.number_input(
-                "T (g)", min_value=0.0, step=0.1, value=ex(f"f_{prefix}"), key=f"entry_{prefix}_f"
-            )
+            kcal = c1.number_input("kcal", min_value=0.0, step=1.0, value=ex(f"kcal_{prefix}"), key=f"entry_{prefix}_kcal")
+            p = c2.number_input("B (g)", min_value=0.0, step=0.1, value=ex(f"p_{prefix}"), key=f"entry_{prefix}_p")
+            c = c3.number_input("W (g)", min_value=0.0, step=0.1, value=ex(f"c_{prefix}"), key=f"entry_{prefix}_c")
+            f = c4.number_input("T (g)", min_value=0.0, step=0.1, value=ex(f"f_{prefix}"), key=f"entry_{prefix}_f")
             return kcal, p, c, f
 
         kcal_m1, p_m1, c_m1, f_m1 = meal_block("1 posiłek", "m1")
@@ -418,25 +390,15 @@ with tabs[0]:
         st.markdown("### Aktywność")
         a1, a2 = st.columns(2)
         steps = a1.number_input("Kroki", min_value=0, step=100, value=ex_int("steps"), key="entry_steps")
-        kcal_per_step = a2.number_input(
-            "kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step"
-        )
+        kcal_per_step = a2.number_input("kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step")
 
         t1, t2 = st.columns([2, 1])
         training_name = t1.text_input("Trening (nazwa)", value=ex_str("training_name", ""), key="entry_training_name")
-        training_kcal = t2.number_input(
-            "Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal"
-        )
+        training_kcal = t2.number_input("Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal")
 
         st.markdown("### Pomiary ciała")
         p1, p2, p3, p4 = st.columns(4)
-        weight_body = p1.number_input(
-            "Waga (kg)",
-            min_value=0.0,
-            step=0.1,
-            value=ex("weight", 0.0),
-            key="entry_weight_body",
-        )
+        weight_body = p1.number_input("Waga (kg)", min_value=0.0, step=0.1, value=ex("weight", 0.0), key="entry_weight_body")
         waist = p2.number_input("Talia (cm)", min_value=0.0, step=0.1, value=ex("waist_cm", 0.0), key="entry_waist")
         biceps = p3.number_input("Biceps (cm)", min_value=0.0, step=0.1, value=ex("biceps_cm", 0.0), key="entry_biceps")
         chest = p4.number_input("Klatka (cm)", min_value=0.0, step=0.1, value=ex("chest_cm", 0.0), key="entry_chest")
@@ -489,24 +451,11 @@ with tabs[0]:
             chosen_weight = float(weight_body)
 
             payload = dict(
-                kcal_m1=float(kcal_m1),
-                p_m1=float(p_m1),
-                c_m1=float(c_m1),
-                f_m1=float(f_m1),
-                kcal_m2=float(kcal_m2),
-                p_m2=float(p_m2),
-                c_m2=float(c_m2),
-                f_m2=float(f_m2),
-                kcal_m3=float(kcal_m3),
-                p_m3=float(p_m3),
-                c_m3=float(c_m3),
-                f_m3=float(f_m3),
-                kcal_add=float(kcal_add),
-                p_add=float(p_add),
-                c_add=float(c_add),
-                f_add=float(f_add),
-                steps=int(steps),
-                kcal_per_step=float(kcal_per_step),
+                kcal_m1=float(kcal_m1), p_m1=float(p_m1), c_m1=float(c_m1), f_m1=float(f_m1),
+                kcal_m2=float(kcal_m2), p_m2=float(p_m2), c_m2=float(c_m2), f_m2=float(f_m2),
+                kcal_m3=float(kcal_m3), p_m3=float(p_m3), c_m3=float(c_m3), f_m3=float(f_m3),
+                kcal_add=float(kcal_add), p_add=float(p_add), c_add=float(c_add), f_add=float(f_add),
+                steps=int(steps), kcal_per_step=float(kcal_per_step),
                 weight=chosen_weight if chosen_weight > 0 else None,
                 training_name=training_name.strip() if training_name.strip() else None,
                 training_kcal=float(training_kcal),
@@ -514,12 +463,14 @@ with tabs[0]:
                 biceps_cm=float(biceps) if float(biceps) > 0 else None,
                 chest_cm=float(chest) if float(chest) > 0 else None,
             )
+
             with eng.begin() as conn:
                 upsert_day(conn, USER_ID, d, payload)
 
             st.session_state["_do_clear_form"] = True
             st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
             st.rerun()
+
 
 # ----------------------------
 # TAB: HISTORY
@@ -583,7 +534,8 @@ with tabs[1]:
 
             show = (
                 df[
-                    ["day", "steps", "kcal_kroki", "training_kcal", "weight", "kcal_jedzenie", "kcal_netto", "B", "W", "T",
+                    ["day", "steps", "kcal_kroki", "training_kcal", "weight",
+                     "kcal_jedzenie", "kcal_netto", "B", "W", "T",
                      "kcal_status", "B_status", "W_status", "T_status", "kroki_status"]
                 ]
                 .rename(
@@ -634,6 +586,7 @@ with tabs[1]:
                     st.success(f"Usunięto {dd} ✅")
                     st.rerun()
 
+
 # ----------------------------
 # TAB: CHARTS
 # ----------------------------
@@ -648,8 +601,6 @@ with tabs[2]:
         df = df.copy()
         df["day"] = pd.to_datetime(df["day"])
         df = df.sort_values("day")
-
-        # kolumna "date_str" do osi bez godzin
         df["date_str"] = df["day"].dt.strftime("%Y-%m-%d")
 
         min_d = df["day"].min().date()
@@ -672,19 +623,19 @@ with tabs[2]:
 
         st.markdown("### Kroki")
         steps_chart = (
-        alt.Chart(dff)
-        .mark_bar(size=18)  # <- im mniejsza liczba, tym cieńsze słupki (np. 8-25)
-        .encode(
-            x=alt.X("date_str:O", title="Data", sort=None, scale=alt.Scale(paddingInner=0.6, paddingOuter=0.2)),
-            y=alt.Y("steps:Q", title="Kroki"),
-            tooltip=[
-                alt.Tooltip("date_str:O", title="Data"),
-                alt.Tooltip("steps:Q", title="Kroki"),
-                alt.Tooltip("kcal_per_step:Q", title="kcal/krok"),
-            ],
+            alt.Chart(dff)
+            .mark_bar(size=18)
+            .encode(
+                x=alt.X("date_str:O", title="Data", sort=None, scale=alt.Scale(paddingInner=0.6, paddingOuter=0.2)),
+                y=alt.Y("steps:Q", title="Kroki"),
+                tooltip=[
+                    alt.Tooltip("date_str:O", title="Data"),
+                    alt.Tooltip("steps:Q", title="Kroki"),
+                    alt.Tooltip("kcal_per_step:Q", title="kcal/krok"),
+                ],
+            )
+            .interactive()
         )
-    .interactive()
-)
         st.altair_chart(steps_chart, use_container_width=True)
 
         st.markdown("### Waga")
@@ -694,7 +645,7 @@ with tabs[2]:
         else:
             w_min = float(wdf["weight"].min())
             w_max = float(wdf["weight"].max())
-            pad = max(0.5, (w_max - w_min) * 0.05)  # minimum 0.5 kg marginesu
+            pad = max(0.5, (w_max - w_min) * 0.05)
 
             weight_chart = (
                 alt.Chart(wdf)
@@ -711,9 +662,9 @@ with tabs[2]:
                         alt.Tooltip("weight:Q", title="Waga (kg)", format=".1f"),
                         alt.Tooltip("steps:Q", title="Kroki"),
                     ],
+                )
+                .interactive()
             )
-    .interactive()
-)
             st.altair_chart(weight_chart, use_container_width=True)
 
             delta_kg = float(wdf["weight"].iloc[-1]) - float(wdf["weight"].iloc[0])
@@ -765,6 +716,7 @@ with tabs[2]:
                 )
                 st.altair_chart(meas_chart, use_container_width=True)
 
+
 # ----------------------------
 # TAB: SETTINGS
 # ----------------------------
@@ -781,22 +733,17 @@ with tabs[3]:
 
     st.caption("Kcal: 🟢 do celu • 🟡 cel+200 • 🔴 powyżej. Kroki: 🟢 >= cel • 🟡 >= cel-2000 • 🔴 mniej.")
 
-if st.button("💾 Zapisz ustawienia", type="primary"):
-    try:
-        with eng.begin() as conn:
-            set_setting(conn, USER_ID, "kcal_target", str(float(new_kcal)))
-            set_setting(conn, USER_ID, "protein_target", str(float(new_p)))
-            set_setting(conn, USER_ID, "carbs_target", str(float(new_c)))
-            set_setting(conn, USER_ID, "fat_target", str(float(new_f)))
-            set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
+    if st.button("💾 Zapisz ustawienia", type="primary"):
+        try:
+            with eng.begin() as conn:
+                set_setting(conn, USER_ID, "kcal_target", str(float(new_kcal)))
+                set_setting(conn, USER_ID, "protein_target", str(float(new_p)))
+                set_setting(conn, USER_ID, "carbs_target", str(float(new_c)))
+                set_setting(conn, USER_ID, "fat_target", str(float(new_f)))
+                set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
 
-        st.success("Zapisano ustawienia ✅")
-        st.rerun()
-
-    except Exception as e:
-        st.error("Nie udało się zapisać ustawień.")
-        st.exception(e)
-
-
-
-
+            st.success("Zapisano ustawienia ✅")
+            st.rerun()
+        except Exception as e:
+            st.error("Nie udało się zapisać ustawień.")
+            st.exception(e)
