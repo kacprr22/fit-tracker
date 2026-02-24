@@ -322,7 +322,7 @@ def login_ui():
             else:
                 st.error("Zły PIN.")
  
-        )
+        
 
 
 # ----------------------------
@@ -849,4 +849,5 @@ with tabs[3]:
 
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
 
