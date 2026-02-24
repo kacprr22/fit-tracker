@@ -107,6 +107,11 @@ def ensure_schema():
             )
         )
 
+        # --- DODATEK: POMIARY CIAŁA (bezpieczna "migracja" dla istniejącej tabeli) ---
+        conn.execute(text("""alter table public.daily add column if not exists waist_cm numeric;"""))
+        conn.execute(text("""alter table public.daily add column if not exists biceps_cm numeric;"""))
+        conn.execute(text("""alter table public.daily add column if not exists chest_cm numeric;"""))
+
 
 def get_setting(conn, user_id: int, key: str, default: str) -> str:
     row = (
@@ -159,6 +164,7 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
             kcal_add, p_add, c_add, f_add,
             steps, kcal_per_step, weight,
             training_name, training_kcal,
+            waist_cm, biceps_cm, chest_cm,
             updated_at
         ) values (
             :user_id, :day,
@@ -168,6 +174,7 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
             :kcal_add, :p_add, :c_add, :f_add,
             :steps, :kcal_per_step, :weight,
             :training_name, :training_kcal,
+            :waist_cm, :biceps_cm, :chest_cm,
             now()
         )
         on conflict (user_id, day)
@@ -178,6 +185,7 @@ def upsert_day(conn, user_id: int, d: date, payload: dict):
             kcal_add=excluded.kcal_add, p_add=excluded.p_add, c_add=excluded.c_add, f_add=excluded.f_add,
             steps=excluded.steps, kcal_per_step=excluded.kcal_per_step, weight=excluded.weight,
             training_name=excluded.training_name, training_kcal=excluded.training_kcal,
+            waist_cm=excluded.waist_cm, biceps_cm=excluded.biceps_cm, chest_cm=excluded.chest_cm,
             updated_at=now()
     """
         ),
@@ -227,6 +235,12 @@ def clear_day_form(keep_kcal_per_step: bool = True):
         "entry_steps",
         "entry_weight",
         "entry_training_kcal",
+
+        # --- DODATEK: POMIARY CIAŁA ---
+        "entry_weight_body",
+        "entry_waist",
+        "entry_biceps",
+        "entry_chest",
     ]
     text_keys = ["entry_training_name"]
 
@@ -352,8 +366,6 @@ tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 # TAB: ENTRY
 # ----------------------------
 with tabs[0]:
-    # Czyść formularz *bez błędu StreamlitAPIException*:
-    # wykonujemy czyszczenie PRZED narysowaniem widgetów.
     if st.session_state.get("_do_clear_form", False):
         clear_day_form(keep_kcal_per_step=True)
         st.session_state["_do_clear_form"] = False
@@ -385,6 +397,13 @@ with tabs[0]:
                 return str(existing[name] or "")
             return str(default)
 
+        # --- synchronizacja wagi (Aktywność <-> Pomiary ciała) ---
+        def _sync_weight_from_activity():
+            st.session_state["entry_weight_body"] = float(st.session_state.get("entry_weight", 0.0) or 0.0)
+
+        def _sync_weight_from_body():
+            st.session_state["entry_weight"] = float(st.session_state.get("entry_weight_body", 0.0) or 0.0)
+
         st.markdown("### Posiłki")
 
         def meal_block(title: str, prefix: str):
@@ -415,7 +434,14 @@ with tabs[0]:
         kcal_per_step = a2.number_input(
             "kcal / krok", min_value=0.0, step=0.01, value=ex("kcal_per_step", 0.04), key="entry_kcal_per_step"
         )
-        weight = a3.number_input("Waga (kg)", min_value=0.0, step=0.1, value=ex("weight", 0.0), key="entry_weight")
+        weight = a3.number_input(
+            "Waga (kg)",
+            min_value=0.0,
+            step=0.1,
+            value=ex("weight", 0.0),
+            key="entry_weight",
+            on_change=_sync_weight_from_activity,
+        )
 
         t1, t2 = st.columns([2, 1])
         training_name = t1.text_input("Trening (nazwa)", value=ex_str("training_name", ""), key="entry_training_name")
@@ -423,6 +449,40 @@ with tabs[0]:
             "Trening (kcal spalone)", min_value=0.0, step=10.0, value=ex("training_kcal", 0.0), key="entry_training_kcal"
         )
 
+        # --- DODATEK: POMIARY CIAŁA ---
+        st.markdown("### Pomiary ciała")
+        p1, p2, p3, p4 = st.columns(4)
+        weight_body = p1.number_input(
+            "Waga (kg)",
+            min_value=0.0,
+            step=0.1,
+            value=ex("weight", 0.0),
+            key="entry_weight_body",
+            on_change=_sync_weight_from_body,
+        )
+        waist = p2.number_input(
+            "Talia (cm)",
+            min_value=0.0,
+            step=0.1,
+            value=ex("waist_cm", 0.0),
+            key="entry_waist",
+        )
+        biceps = p3.number_input(
+            "Biceps (cm)",
+            min_value=0.0,
+            step=0.1,
+            value=ex("biceps_cm", 0.0),
+            key="entry_biceps",
+        )
+        chest = p4.number_input(
+            "Klatka (cm)",
+            min_value=0.0,
+            step=0.1,
+            value=ex("chest_cm", 0.0),
+            key="entry_chest",
+        )
+
+        # totals
         kcal_food = kcal_m1 + kcal_m2 + kcal_m3 + kcal_add
         p_total = p_m1 + p_m2 + p_m3 + p_add
         c_total = c_m1 + c_m2 + c_m3 + c_add
@@ -468,6 +528,9 @@ with tabs[0]:
             st.rerun()
 
         if save_clicked:
+            # bierzemy wagę z "Pomiary ciała" jeśli wpisana, inaczej z "Aktywność"
+            chosen_weight = float(weight_body) if float(weight_body) > 0 else float(weight)
+
             payload = dict(
                 kcal_m1=float(kcal_m1),
                 p_m1=float(p_m1),
@@ -487,9 +550,14 @@ with tabs[0]:
                 f_add=float(f_add),
                 steps=int(steps),
                 kcal_per_step=float(kcal_per_step),
-                weight=float(weight) if float(weight) > 0 else None,
+                weight=chosen_weight if chosen_weight > 0 else None,
                 training_name=training_name.strip() if training_name.strip() else None,
                 training_kcal=float(training_kcal),
+
+                # --- DODATEK: pomiary ciała ---
+                waist_cm=float(waist) if float(waist) > 0 else None,
+                biceps_cm=float(biceps) if float(biceps) > 0 else None,
+                chest_cm=float(chest) if float(chest) > 0 else None,
             )
             with eng.begin() as conn:
                 upsert_day(conn, USER_ID, d, payload)
@@ -591,14 +659,14 @@ with tabs[1]:
                         "weight": "Waga (kg)",
                         "kcal_jedzenie": "kcal jedzenie",
                         "kcal_netto": "kcal netto",
-                        "B": "B (g)",
-                        "W": "W (g)",
-                        "T": "T (g)",
+                        "B": "Białko (g)",
+                        "W": "Węglowodany (g)",
+                        "T": "Tłuszcze (g)",
                         "kcal_status": "kcal 🔥",
-                        "B_status": "B ✅",
-                        "W_status": "W ✅",
-                        "T_status": "T ✅",
-                        "kroki_status": "kroki 🚶",
+                        "B_status": "Białko ✅",
+                        "W_status": "Węglowodany ✅",
+                        "T_status": "Tłuszcze ✅",
+                        "kroki_status": "Kroki 🚶",
                     }
                 )
                 .sort_values("Data", ascending=False)
@@ -707,6 +775,56 @@ with tabs[2]:
 
             delta_kg = float(wdf["weight"].iloc[-1]) - float(wdf["weight"].iloc[0])
             st.metric("Zmiana wagi od pierwszego pomiaru (w zakresie)", f"{delta_kg:+.1f} kg")
+
+        # --- DODATEK: WYKRES POMIARÓW CIAŁA (wybieralne serie) ---
+        st.markdown("### Pomiary ciała (wybierz co ma być widoczne)")
+        options = {
+            "Waga (kg)": "weight",
+            "Talia (cm)": "waist_cm",
+            "Biceps (cm)": "biceps_cm",
+            "Klatka (cm)": "chest_cm",
+        }
+        chosen = st.multiselect(
+            "Serie na wykresie",
+            list(options.keys()),
+            default=["Talia (cm)", "Biceps (cm)", "Klatka (cm)"],
+            key="meas_series",
+        )
+
+        if not chosen:
+            st.info("Wybierz przynajmniej jedną serię.")
+        else:
+            cols = ["day"] + [options[k] for k in chosen]
+            mdf = dff[cols].copy()
+
+            # wywalamy wiersze gdzie wszystkie wybrane wartości są puste
+            val_cols = [options[k] for k in chosen]
+            mdf = mdf.dropna(subset=val_cols, how="all")
+
+            if mdf.empty:
+                st.info("Brak danych pomiarów w wybranym zakresie.")
+            else:
+                long = mdf.melt(id_vars=["day"], value_vars=val_cols, var_name="metric", value_name="value")
+                # mapka nazw ładnych do legendy
+                inv = {v: k for k, v in options.items()}
+                long["metric"] = long["metric"].map(inv)
+
+                meas_chart = (
+                    alt.Chart(long.dropna(subset=["value"]))
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("day:T", title="Dzień"),
+                        y=alt.Y("value:Q", title="Wartość"),
+                        color=alt.Color("metric:N", title="Pomiar"),
+                        tooltip=[
+                            alt.Tooltip("day:T", title="Data"),
+                            alt.Tooltip("metric:N", title="Pomiar"),
+                            alt.Tooltip("value:Q", title="Wartość", format=".1f"),
+                        ],
+                    )
+                    .interactive()
+                )
+                st.altair_chart(meas_chart, use_container_width=True)
 
 # ----------------------------
 # TAB: SETTINGS
