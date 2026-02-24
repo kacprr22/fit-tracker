@@ -671,19 +671,19 @@ with tabs[2]:
 
         st.markdown("### Kroki")
         steps_chart = (
-            alt.Chart(dff)
-            .mark_bar()
-            .encode(
-                x=alt.X("date_str:O", title="Data", sort=None),
-                y=alt.Y("steps:Q", title="Kroki"),
-                tooltip=[
-                    alt.Tooltip("date_str:O", title="Data"),
-                    alt.Tooltip("steps:Q", title="Kroki"),
-                    alt.Tooltip("kcal_per_step:Q", title="kcal/krok"),
-                ],
-            )
-            .interactive()
+        alt.Chart(dff)
+        .mark_bar(size=18)  # <- im mniejsza liczba, tym cieńsze słupki (np. 8-25)
+        .encode(
+            x=alt.X("date_str:O", title="Data", sort=None, scale=alt.Scale(paddingInner=0.6, paddingOuter=0.2)),
+            y=alt.Y("steps:Q", title="Kroki"),
+            tooltip=[
+                alt.Tooltip("date_str:O", title="Data"),
+                alt.Tooltip("steps:Q", title="Kroki"),
+                alt.Tooltip("kcal_per_step:Q", title="kcal/krok"),
+            ],
         )
+    .interactive()
+)
         st.altair_chart(steps_chart, use_container_width=True)
 
         st.markdown("### Waga")
@@ -782,3 +782,4 @@ with tabs[3]:
 
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
