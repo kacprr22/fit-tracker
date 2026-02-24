@@ -277,8 +277,6 @@ def login_ui():
                 st.rerun()
             else:
                 st.error("Zły PIN.")
-    with col2:
-        st.info("Profile:\n- Kacper (PIN 1111)\n- Klaudia (PIN 2222)\n\nKażdy profil ma osobne dane w bazie (user_id).")
 
 
 # ----------------------------
@@ -448,7 +446,7 @@ with tabs[0]:
         with btn2:
             clear_clicked = st.button("🧹 Wyczyść pola")
         with btn3:
-            load_clicked = st.button("📥 Wczytaj zapisane dane")
+            load_clicked = st.button("")
 
         if clear_clicked:
             st.session_state["form_version"] += 1
@@ -751,3 +749,4 @@ with tabs[3]:
         except Exception as e:
             st.error("Nie udało się zapisać ustawień.")
             st.exception(e)
+
