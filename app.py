@@ -321,6 +321,11 @@ tabs = st.tabs(["Wpis", "Historia", "Wykresy", "Cele / Ustawienia"])
 # TAB: ENTRY
 # ----------------------------
 with tabs[0]:
+        # jeśli poprzedni klik kazał czyścić formularz – zrób to ZANIM powstaną widgety
+    if st.session_state.get("_do_clear_form", False):
+        clear_day_form(keep_kcal_per_step=True)
+        st.session_state["_do_clear_form"] = False
+        
     c_left, c_right = st.columns([2, 1])
     with c_right:
         range_preview(kcal_target, protein_target, carbs_target, fat_target, steps_target)
@@ -417,23 +422,27 @@ with tabs[0]:
             clear_day_form(keep_kcal_per_step=True)
             st.rerun()
 
-        if save_clicked:
-            payload = dict(
-                kcal_m1=kcal_m1, p_m1=p_m1, c_m1=c_m1, f_m1=f_m1,
-                kcal_m2=kcal_m2, p_m2=p_m2, c_m2=c_m2, f_m2=f_m2,
-                kcal_m3=kcal_m3, p_m3=p_m3, c_m3=c_m3, f_m3=f_m3,
-                kcal_add=kcal_add, p_add=p_add, c_add=c_add, f_add=f_add,
-                steps=int(steps), kcal_per_step=float(kcal_per_step),
-                weight=float(weight) if weight > 0 else None,
-                training_name=training_name if training_name.strip() else None,
-                training_kcal=float(training_kcal),
-            )
-            with eng.begin() as conn:
-                upsert_day(conn, USER_ID, d, payload)
+       if clear_clicked:
+    st.session_state["_do_clear_form"] = True
+    st.rerun()
 
-            clear_day_form(keep_kcal_per_step=True)
-            st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
-            st.rerun()
+if save_clicked:
+    payload = dict(
+        kcal_m1=kcal_m1, p_m1=p_m1, c_m1=c_m1, f_m1=f_m1,
+        kcal_m2=kcal_m2, p_m2=p_m2, c_m2=c_m2, f_m2=f_m2,
+        kcal_m3=kcal_m3, p_m3=p_m3, c_m3=c_m3, f_m3=f_m3,
+        kcal_add=kcal_add, p_add=p_add, c_add=c_add, f_add=f_add,
+        steps=int(steps), kcal_per_step=float(kcal_per_step),
+        weight=float(weight) if weight > 0 else None,
+        training_name=training_name if training_name.strip() else None,
+        training_kcal=float(training_kcal),
+    )
+    with eng.begin() as conn:
+        upsert_day(conn, USER_ID, d, payload)
+
+    st.session_state["_do_clear_form"] = True
+    st.success(f"Zapisano dzień {d} ✅ (formularz wyczyszczony)")
+    st.rerun()
 
 # ----------------------------
 # TAB: HISTORY
@@ -653,4 +662,5 @@ with tabs[3]:
             set_setting(conn, USER_ID, "steps_target", str(int(new_steps)))
         st.success("Zapisano ustawienia ✅")
         st.rerun()
+
 
